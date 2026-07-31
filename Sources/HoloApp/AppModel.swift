@@ -61,6 +61,8 @@ final class AppModel: ObservableObject {
     @Published var debugRecordingEnabled = false
     @Published private(set) var hasDebugRecordings = false
     @Published var errorMessage: String?
+    @Published private(set) var environmentalSnapshot = EnvironmentalSnapshot.demonstration()
+    @Published var learningMode = true
 
     let audio = AudioCaptureService()
     @Published var calibrationDraft = CalibrationDraft()
@@ -70,6 +72,7 @@ final class AppModel: ObservableObject {
     private let comparisonStore: ApproachComparisonStore?
     private let debugStore: DebugRecordingStore?
     private let actionDispatcher = LocalActionDispatcher()
+    private let environmentalSpeaker = NSSpeechSynthesizer()
     private var recalibratingProfileID: UUID?
     private var calibrationAcceptAfter = Date.distantPast
     private var evaluationAcceptAfter = Date.distantPast
@@ -750,6 +753,7 @@ final class AppModel: ObservableObject {
                 isDeskActive: section == .live
             ) {
                 statusMessage = "\(zone.displayName) • \(Int(decision.confidence * 100))% confidence"
+                speakEnvironmentalSummary(for: zone)
                 do { try actionDispatcher.perform(profile.action(for: zone)) }
                 catch {
                     statusMessage = "\(zone.displayName) accepted • action failed"
@@ -761,6 +765,16 @@ final class AppModel: ObservableObject {
         } else {
             statusMessage = "Rejected • \(decision.rejectionReason?.displayName ?? "low confidence")"
         }
+    }
+
+    func environmentalReading(for zone: DeskZone) -> EnvironmentalReading? {
+        environmentalSnapshot.reading(for: zone.environmentalTopic)
+    }
+
+    private func speakEnvironmentalSummary(for zone: DeskZone) {
+        guard let reading = environmentalReading(for: zone) else { return }
+        environmentalSpeaker.stopSpeaking()
+        environmentalSpeaker.startSpeaking(reading.spokenSummary)
     }
 
     private func handleCalibration(_ observation: TapObservation, session: inout CalibrationSession) {

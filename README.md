@@ -14,6 +14,14 @@ Left Front     └─────────────┘      Right Front
 
 Holo is a research prototype. Automated DSP tests pass, but useful accuracy still has to be measured on each real MacBook, desk, room, and laptop position. No physical accuracy claim is made without a saved 60-tap evaluation from that setup.
 
+## Environmental dashboard prototype
+
+The Desk screen is being adapted into a tap-controlled environmental conditions dashboard. Its four zones answer plain-language questions about air quality, weather and UV exposure, environmental alerts, and rainfall or flood concern. Accepted taps speak the corresponding summary.
+
+The current environmental values are intentionally marked as demonstrations. They exercise the interface and educational explanations but must not be treated as live conditions. Live location, observation timestamps, provider attribution, caching, and stale-data handling will be added before the demonstration label is removed.
+
+Environmental terms are explained in context. For example, the dashboard defines AQI as the Air Quality Index, explains that it converts pollution measurements into a public-health scale, and pairs the number with practical guidance. The design distinguishes public-health categories and user thresholds from legally determined regulatory exceedances.
+
 The requirement-by-requirement evidence ledger is in [ACCEPTANCE.md](ACCEPTANCE.md).
 
 ## What is implemented

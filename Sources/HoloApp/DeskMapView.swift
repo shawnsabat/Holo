@@ -10,6 +10,7 @@ struct DeskMapView: View {
     var signalStrength: Double
     var isListening: Bool
     var counts: [Int]? = nil
+    var showsEnvironmentalTopics = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -69,11 +70,12 @@ struct DeskMapView: View {
             }
 
             VStack(alignment: zone.isLeft ? .trailing : .leading, spacing: 3) {
-                Text(zone.positionName)
+                Text(showsEnvironmentalTopics ? zone.environmentalTopic.title : zone.positionName)
                     .font(.callout.weight(.medium))
-                Text(zone.isLeft ? "Left" : "Right")
+                Text(showsEnvironmentalTopics ? zone.environmentalTopic.question : (zone.isLeft ? "Left" : "Right"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
 
             if let counts, zone.rawValue < counts.count {
@@ -92,7 +94,7 @@ struct DeskMapView: View {
         .background(zoneFill(active: isActive, target: isTarget))
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(zone.displayName)
+        .accessibilityLabel(showsEnvironmentalTopics ? zone.environmentalTopic.title : zone.displayName)
         .accessibilityValue(accessibilityValue(for: zone, active: isActive, target: isTarget))
         .help(zone.instruction)
     }

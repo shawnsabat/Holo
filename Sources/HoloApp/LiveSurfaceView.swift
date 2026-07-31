@@ -16,26 +16,97 @@ struct LiveSurfaceView: View {
     }
 
     private var liveDesk: some View {
-        VStack(spacing: 20) {
-            Spacer(minLength: 20)
+        ScrollView {
+            VStack(spacing: 20) {
+                demonstrationNotice
 
-            DeskMapView(
-                activeZone: model.activeZone,
-                targetZone: nil,
-                confidence: model.lastDecision?.confidence ?? 0,
-                signalStrength: model.lastDecision?.signalStrength ?? model.audio.liveLevel,
-                isListening: model.audio.isListening
-            )
-            .frame(maxWidth: 760, maxHeight: 490)
-            .padding(.horizontal, 36)
+                DeskMapView(
+                    activeZone: model.activeZone,
+                    targetZone: nil,
+                    confidence: model.lastDecision?.confidence ?? 0,
+                    signalStrength: model.lastDecision?.signalStrength ?? model.audio.liveLevel,
+                    isListening: model.audio.isListening,
+                    showsEnvironmentalTopics: true
+                )
+                .frame(maxWidth: 800, minHeight: 360, maxHeight: 460)
+                .padding(.horizontal, 24)
 
-            resultStrip
-
-            Spacer(minLength: 28)
+                environmentalReadings
+                resultStrip
+            }
+            .frame(maxWidth: 860)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 28)
         .background(HoloTheme.background)
+    }
+
+    private var demonstrationNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "testtube.2")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Demonstration readings")
+                    .font(.callout.weight(.semibold))
+                Text("These values teach the interface and are not live conditions. Live location and environmental data are the next integration step.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("Explain terms", isOn: $model.learningMode)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Show plain-language explanations of environmental terms")
+        }
+        .padding(.horizontal, 4)
+        .frame(maxWidth: 760)
+    }
+
+    private var environmentalReadings: some View {
+        VStack(spacing: 0) {
+            ForEach(model.environmentalSnapshot.readings) { reading in
+                environmentalRow(reading)
+                if reading.id != model.environmentalSnapshot.readings.last?.id {
+                    Divider()
+                }
+            }
+        }
+        .frame(maxWidth: 760)
+    }
+
+    private func environmentalRow(_ reading: EnvironmentalReading) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: reading.topic.symbolName)
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 26)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(reading.topic.title)
+                        .font(.headline)
+                    Text(reading.headline)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(reading.value)
+                        .font(.callout.monospacedDigit().weight(.medium))
+                }
+                Text(reading.guidance)
+                    .font(.callout)
+                if model.learningMode {
+                    Text(reading.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 13)
+        .padding(.horizontal, 4)
+        .background(reading.topic == model.activeZone?.environmentalTopic ? Color.accentColor.opacity(0.08) : .clear)
+        .accessibilityElement(children: .combine)
     }
 
     private var setupPrompt: some View {
@@ -103,7 +174,7 @@ struct LiveSurfaceView: View {
 
     private var lastResultTitle: String {
         guard let decision = model.lastDecision else { return "Waiting for a tap" }
-        return decision.zone?.displayName ?? "Tap rejected"
+        return decision.zone?.environmentalTopic.title ?? "Tap rejected"
     }
 
     private func compactGauge(_ label: String, value: Double) -> some View {
