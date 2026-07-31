@@ -9,6 +9,7 @@ struct EnvironmentalPlace: Codable, Hashable, Identifiable, Sendable {
     let name: String
     let region: String?
     let country: String
+    let countryCode: String?
     let latitude: Double
     let longitude: Double
 
@@ -70,6 +71,7 @@ private enum EnvironmentalAPI {
         let latitude: Double
         let longitude: Double
         let country: String
+        let country_code: String?
         let admin1: String?
     }
     private struct WeatherResponse: Decodable {
@@ -93,6 +95,16 @@ private enum EnvironmentalAPI {
         let pm10: Double
         let ozone: Double
     }
+    private struct NWSAlertResponse: Decodable { let features: [NWSAlertFeature] }
+    private struct NWSAlertFeature: Decodable {
+        let properties: NWSAlertProperties
+    }
+    private struct NWSAlertProperties: Decodable {
+        let event: String
+        let headline: String?
+        let severity: String?
+        let instruction: String?
+    }
 
     static func search(_ query: String) async throws -> [EnvironmentalPlace] {
         var components = URLComponents(string: "https://geocoding-api.open-meteo.com/v1/search")!
@@ -106,12 +118,18 @@ private enum EnvironmentalAPI {
         return (response.results ?? []).map {
             EnvironmentalPlace(
                 id: $0.id, name: $0.name, region: $0.admin1, country: $0.country,
+                countryCode: $0.country_code,
                 latitude: $0.latitude, longitude: $0.longitude
             )
         }
     }
 
-    static func snapshot(latitude: Double, longitude: Double, locationName: String) async throws -> EnvironmentalSnapshot {
+    static func snapshot(
+        latitude: Double,
+        longitude: Double,
+        locationName: String,
+        countryCode: String?
+    ) async throws -> EnvironmentalSnapshot {
         let weatherURL = url(
             base: "https://api.open-meteo.com/v1/forecast",
             latitude: latitude,
@@ -132,7 +150,8 @@ private enum EnvironmentalAPI {
 
         async let weatherRequest: WeatherResponse = decode(weatherURL)
         async let airRequest: AirResponse = decode(airURL)
-        let (weather, air) = try await (weatherRequest, airRequest)
+        async let alertRequest = alerts(latitude: latitude, longitude: longitude, countryCode: countryCode)
+        let (weather, air, alertResult) = try await (weatherRequest, airRequest, alertRequest)
         let category = USAirQualityCategory(aqi: air.current.us_aqi)
         let uv = weather.daily.uv_index_max.first ?? 0
         let uvRisk = UVRisk(index: uv)
@@ -159,14 +178,7 @@ private enum EnvironmentalAPI {
                     guidance: uvRisk.guidance,
                     spokenSummary: "It is \(Int(weather.current.temperature_2m.rounded())) degrees and feels like \(Int(weather.current.apparent_temperature.rounded())). The UV Index is \(format(uv)), which is \(uvRisk.title.lowercased()). \(uvRisk.guidance)"
                 ),
-                EnvironmentalReading(
-                    topic: .environmentalAlerts,
-                    headline: "Official alerts not connected",
-                    value: "Coming next",
-                    explanation: "Open-Meteo does not provide the official United States hazard feed used by this zone. Holo will connect National Weather Service alerts separately.",
-                    guidance: "Check local authorities for urgent warnings until official alerts are connected.",
-                    spokenSummary: "Official environmental alerts are not connected yet. Check local authorities for urgent warnings."
-                ),
+                EnvironmentalAlertInterpreter.reading(for: alertResult),
                 EnvironmentalReading(
                     topic: .waterAndRain,
                     headline: rainfall < 0.1 ? "Little rain expected" : "Rain expected today",
@@ -195,6 +207,36 @@ private enum EnvironmentalAPI {
             throw URLError(.badServerResponse)
         }
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private static func alerts(
+        latitude: Double,
+        longitude: Double,
+        countryCode: String?
+    ) async -> EnvironmentalAlertAvailability {
+        let supportedCodes = Set(["US", "PR", "GU", "VI", "AS", "MP"])
+        guard let countryCode = countryCode?.uppercased(), supportedCodes.contains(countryCode) else {
+            return .outsideCoverage
+        }
+        var components = URLComponents(string: "https://api.weather.gov/alerts/active")!
+        components.queryItems = [URLQueryItem(name: "point", value: "\(latitude),\(longitude)")]
+        var request = URLRequest(url: components.url!)
+        request.setValue("Holo/0.1 (github.com/shawnsabat/Holo)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/geo+json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+                return .unavailable
+            }
+            let properties = try JSONDecoder().decode(NWSAlertResponse.self, from: data).features.map(\.properties)
+            let alerts = properties.map {
+                EnvironmentalAlert(event: $0.event, headline: $0.headline, severity: $0.severity)
+            }
+            return alerts.isEmpty ? .none : .active(alerts)
+        } catch {
+            return .unavailable
+        }
     }
 
     private static func format(_ value: Double) -> String {
@@ -1028,10 +1070,11 @@ final class AppModel: ObservableObject {
             let snapshot = try await EnvironmentalAPI.snapshot(
                 latitude: place.latitude,
                 longitude: place.longitude,
-                locationName: place.displayName
+                locationName: place.displayName,
+                countryCode: place.countryCode
             )
             environmentalSnapshot = snapshot
-            environmentalDataMessage = "Live modeled conditions · Open-Meteo"
+            environmentalDataMessage = "Live conditions · Open-Meteo + NWS alerts"
             saveEnvironmentalCache()
         } catch {
             environmentalDataMessage = environmentalSnapshot.isDemonstration
@@ -1050,6 +1093,7 @@ final class AppModel: ObservableObject {
             name: name,
             region: placemark?.locality == nil ? nil : placemark?.administrativeArea,
             country: placemark?.country ?? "",
+            countryCode: placemark?.isoCountryCode,
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude
         )

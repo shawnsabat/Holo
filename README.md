@@ -18,7 +18,7 @@ Holo is a research prototype. Automated DSP tests pass, but useful accuracy stil
 
 The Desk screen is a tap-controlled environmental conditions dashboard. Its four zones answer plain-language questions about air quality, weather and UV exposure, environmental alerts, and rainfall or flood concern. Accepted taps speak the corresponding summary.
 
-Users can choose their current approximate location or search for a city or ZIP code. Holo retrieves modeled weather and air-quality conditions from Open-Meteo, shows provider attribution and update time, and caches the last successful response. Until a location is chosen, values are prominently marked as demonstrations. Official U.S. environmental alerts are not connected yet and the app says so explicitly.
+Users can choose their current approximate location or search for a city or ZIP code. Holo retrieves modeled weather and air-quality conditions from Open-Meteo and active U.S. watches, warnings, and advisories from the National Weather Service. It shows provider attribution and update time and caches the last successful response. Until a location is chosen, values are prominently marked as demonstrations.
 
 Environmental terms are explained in context. For example, the dashboard defines AQI as the Air Quality Index, explains that it converts pollution measurements into a public-health scale, and pairs the number with practical guidance. The design distinguishes public-health categories and user thresholds from legally determined regulatory exceedances.
 
@@ -95,7 +95,7 @@ While calibration, an accuracy test, or a sensing comparison is active, unrelate
 
 - **Air Quality** explains the U.S. AQI category, PM2.5, ozone, health meaning, and suggested activity changes. Modeled conditions are never described as regulatory exceedances.
 - **Weather & UV** gives temperature, feels-like temperature, humidity, UV risk, and practical sun-protection guidance.
-- **Environmental Alerts** is reserved for official air-quality, heat, smoke, severe-weather, and flood notices. Until an official alert provider is connected, it reports that alerts are unavailable rather than claiming all clear.
+- **Environmental Alerts** retrieves active National Weather Service watches, warnings, and advisories for U.S. locations. Provider failure is reported as unknown—not “all clear”—and locations outside NWS coverage are directed to their regional authority.
 - **Water & Rain** summarizes modeled daily precipitation and explains that rainfall alone cannot determine flooding, stream conditions, or drinking-water quality.
 
 The app requests location only after the user selects Use My Location and stops after obtaining a coarse location. City or ZIP search works without location permission. Accepted taps speak environmental summaries only; they do not run arbitrary shortcuts, shell commands, or application actions.

@@ -133,7 +133,7 @@ struct LiveSurfaceView: View {
         if model.environmentalSnapshot.isDemonstration {
             return "These example values teach the interface and are not live conditions. Choose a location above to replace them."
         }
-        return "Weather and air quality: Open-Meteo. Updated \(model.environmentalSnapshot.updatedAt.formatted(date: .abbreviated, time: .shortened)). Values may be modeled; they are not regulatory determinations."
+        return "Weather and air quality: Open-Meteo. U.S. alerts: National Weather Service. Updated \(model.environmentalSnapshot.updatedAt.formatted(date: .abbreviated, time: .shortened)). Modeled values are not regulatory determinations."
     }
 
     private var environmentalReadings: some View {

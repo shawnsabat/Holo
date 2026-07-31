@@ -40,4 +40,35 @@ final class EnvironmentalConditionsTests: XCTestCase {
 
         XCTAssertEqual(restored, original)
     }
+
+    func testActiveAlertsPrioritizeSeverityAndLimitSpokenList() {
+        let reading = EnvironmentalAlertInterpreter.reading(for: .active([
+            EnvironmentalAlert(event: "Heat Advisory", severity: "Moderate"),
+            EnvironmentalAlert(event: "Extreme Heat Warning", headline: "Dangerous heat expected", severity: "Severe"),
+            EnvironmentalAlert(event: "Flood Watch", severity: "Moderate")
+        ]))
+
+        XCTAssertEqual(reading.headline, "Extreme Heat Warning")
+        XCTAssertEqual(reading.value, "3 active alerts")
+        XCTAssertEqual(reading.explanation, "Dangerous heat expected")
+        XCTAssertTrue(reading.spokenSummary.contains("1 additional alert"))
+    }
+
+    func testEmptyActiveAlertListSafelyBecomesNone() {
+        let reading = EnvironmentalAlertInterpreter.reading(for: .active([]))
+        XCTAssertEqual(reading.headline, "No active NWS alerts")
+    }
+
+    func testUnavailableAlertsNeverClaimAllClear() {
+        let reading = EnvironmentalAlertInterpreter.reading(for: .unavailable)
+        XCTAssertEqual(reading.headline, "Alerts temporarily unavailable")
+        XCTAssertTrue(reading.explanation.contains("does not mean conditions are safe"))
+        XCTAssertFalse(reading.spokenSummary.lowercased().contains("no active alerts"))
+    }
+
+    func testOutsideCoverageDirectsUserToRegionalAuthority() {
+        let reading = EnvironmentalAlertInterpreter.reading(for: .outsideCoverage)
+        XCTAssertEqual(reading.headline, "Outside NWS coverage")
+        XCTAssertTrue(reading.guidance.contains("local national weather service"))
+    }
 }
