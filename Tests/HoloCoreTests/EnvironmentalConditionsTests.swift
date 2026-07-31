@@ -32,4 +32,12 @@ final class EnvironmentalConditionsTests: XCTestCase {
         XCTAssertTrue(snapshot.readings.allSatisfy { !$0.guidance.isEmpty && !$0.spokenSummary.isEmpty })
         XCTAssertTrue(snapshot.reading(for: .airQuality)?.explanation.contains("AQI means Air Quality Index") == true)
     }
+
+    func testSnapshotCanBeCachedAndRestored() throws {
+        let original = EnvironmentalSnapshot.demonstration(now: Date(timeIntervalSince1970: 123))
+        let data = try JSONEncoder().encode(original)
+        let restored = try JSONDecoder().decode(EnvironmentalSnapshot.self, from: data)
+
+        XCTAssertEqual(restored, original)
+    }
 }

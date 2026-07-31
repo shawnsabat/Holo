@@ -3,6 +3,7 @@ import SwiftUI
 
 struct LiveSurfaceView: View {
     @ObservedObject var model: AppModel
+    @State private var locationQuery = ""
 
     var body: some View {
         if model.selectedProfile == nil {
@@ -18,7 +19,8 @@ struct LiveSurfaceView: View {
     private var liveDesk: some View {
         ScrollView {
             VStack(spacing: 20) {
-                demonstrationNotice
+                locationControls
+                dataNotice
 
                 DeskMapView(
                     activeZone: model.activeZone,
@@ -43,14 +45,77 @@ struct LiveSurfaceView: View {
         .background(HoloTheme.background)
     }
 
-    private var demonstrationNotice: some View {
+    private var locationControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.selectedEnvironmentalPlace?.displayName ?? "Choose your location")
+                        .font(.headline)
+                    Text(model.environmentalDataMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if model.isLoadingEnvironmentalData {
+                    ProgressView().controlSize(.small)
+                }
+                if model.selectedEnvironmentalPlace != nil {
+                    Button("Refresh", systemImage: "arrow.clockwise") {
+                        Task { await model.refreshEnvironmentalData() }
+                    }
+                    .disabled(model.isLoadingEnvironmentalData)
+                }
+                Button("Use My Location", systemImage: "location") {
+                    model.requestCurrentEnvironmentalLocation()
+                }
+                .disabled(model.isLoadingEnvironmentalData)
+            }
+
+            HStack {
+                TextField("City or ZIP code", text: $locationQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { searchLocations() }
+                Button("Search") { searchLocations() }
+                    .disabled(locationQuery.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || model.isLoadingEnvironmentalData)
+            }
+
+            if !model.environmentalPlaces.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(model.environmentalPlaces) { place in
+                        Button {
+                            locationQuery = ""
+                            Task { await model.selectEnvironmentalPlace(place) }
+                        } label: {
+                            HStack {
+                                Text(place.displayName)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                            .padding(.vertical, 7)
+                        }
+                        .buttonStyle(.plain)
+                        if place.id != model.environmentalPlaces.last?.id { Divider() }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 760)
+    }
+
+    private func searchLocations() {
+        Task { await model.searchEnvironmentalLocations(locationQuery) }
+    }
+
+    private var dataNotice: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "testtube.2")
-                .foregroundStyle(.orange)
+            Image(systemName: model.environmentalSnapshot.isDemonstration ? "testtube.2" : "leaf")
+                .foregroundStyle(model.environmentalSnapshot.isDemonstration ? .orange : .green)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Demonstration readings")
+                Text(model.environmentalSnapshot.isDemonstration ? "Demonstration readings" : "Modeled environmental conditions")
                     .font(.callout.weight(.semibold))
-                Text("These values teach the interface and are not live conditions. Live location and environmental data are the next integration step.")
+                Text(dataNoticeDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -62,6 +127,13 @@ struct LiveSurfaceView: View {
         }
         .padding(.horizontal, 4)
         .frame(maxWidth: 760)
+    }
+
+    private var dataNoticeDetail: String {
+        if model.environmentalSnapshot.isDemonstration {
+            return "These example values teach the interface and are not live conditions. Choose a location above to replace them."
+        }
+        return "Weather and air quality: Open-Meteo. Updated \(model.environmentalSnapshot.updatedAt.formatted(date: .abbreviated, time: .shortened)). Values may be modeled; they are not regulatory determinations."
     }
 
     private var environmentalReadings: some View {
@@ -116,7 +188,7 @@ struct LiveSurfaceView: View {
                 .foregroundStyle(.secondary)
             Text("Set up the desk around your MacBook")
                 .font(.title2.weight(.semibold))
-            Text("Taps cannot be assigned until Holo learns this desk. You will tap ten times across each of four broad zones: rear and front on both sides of the MacBook.")
+            Text("Environmental zones cannot respond until Holo learns this desk. You will tap ten times across each of four broad zones: rear and front on both sides of the MacBook.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

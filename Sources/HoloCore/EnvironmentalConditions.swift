@@ -118,7 +118,7 @@ public enum UVRisk: String, Codable, Sendable, Equatable {
     }
 }
 
-public struct EnvironmentalReading: Equatable, Sendable, Identifiable {
+public struct EnvironmentalReading: Codable, Equatable, Sendable, Identifiable {
     public let topic: EnvironmentalTopic
     public let headline: String
     public let value: String
@@ -145,7 +145,7 @@ public struct EnvironmentalReading: Equatable, Sendable, Identifiable {
     }
 }
 
-public struct EnvironmentalSnapshot: Equatable, Sendable {
+public struct EnvironmentalSnapshot: Codable, Equatable, Sendable {
     public let locationName: String
     public let updatedAt: Date
     public let isDemonstration: Bool
