@@ -48,6 +48,21 @@ jobs:
       - name: Publish failure details
         if: failure()
         run: |
+          LOG_FILE=''
+          if [ -f test.log ]; then
+            LOG_FILE='test.log'
+          elif [ -f build.log ]; then
+            LOG_FILE='build.log'
+          fi
+
+          if [ -n "$LOG_FILE" ]; then
+            grep -E 'error:|fatal error:|BUILD FAILED|Testing failed' "$LOG_FILE" \
+              | tail -n 80 \
+              | while IFS= read -r line; do
+                  echo "::error title=Xcode diagnostic::$line"
+                done
+          fi
+
           echo '### Xcode failure details' >> "$GITHUB_STEP_SUMMARY"
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
           if [ -f test.log ]; then
