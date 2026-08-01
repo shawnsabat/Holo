@@ -1,6 +1,11 @@
 import XCTest
 
 final class GuidedNavigationGateTests: XCTestCase {
+    func testPrimaryWorkflowHasNoShortcutActionsScreen() {
+        XCTAssertEqual(AppSection.primary, [.live, .calibrate, .evaluate])
+        XCTAssertFalse(AppSection.allCases.contains { $0.title == "Actions" })
+    }
+
     func testNoActiveSessionAllowsAllNavigation() {
         XCTAssertNil(GuidedNavigationGate.guidedSection(
             calibrationActive: false,

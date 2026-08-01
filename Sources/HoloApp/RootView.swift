@@ -61,8 +61,6 @@ struct RootView: View {
             DiagnosticsView(model: model)
         case .evaluate:
             EvaluationView(model: model)
-        case .actions:
-            ZoneActionsView(model: model)
         }
     }
 

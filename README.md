@@ -1,6 +1,6 @@
 # Holo
 
-Holo is an experimental native macOS utility that turns the desk immediately around a MacBook into four assignable tap zones. It listens through the selected Mac microphone, extracts acoustic features from short impulse windows, classifies the zone locally, and runs the action assigned to that zone.
+Holo is an experimental native macOS environmental utility that turns the desk immediately around a MacBook into four tap zones. It listens through the selected Mac microphone, classifies the tapped zone locally, and speaks plain-language information about air quality, weather and UV, environmental alerts, or rain and water conditions.
 
 The topology is intentionally four broad zones:
 
@@ -14,6 +14,14 @@ Left Front     └─────────────┘      Right Front
 
 Holo is a research prototype. Automated DSP tests pass, but useful accuracy still has to be measured on each real MacBook, desk, room, and laptop position. No physical accuracy claim is made without a saved 60-tap evaluation from that setup.
 
+## Environmental dashboard prototype
+
+The Desk screen is a tap-controlled environmental conditions dashboard. Its four zones answer plain-language questions about air quality, weather and UV exposure, environmental alerts, and rainfall or flood concern. Accepted taps speak the corresponding summary.
+
+Users can choose their current approximate location or search for a city or ZIP code. Holo retrieves modeled weather and air-quality conditions from Open-Meteo and active U.S. watches, warnings, and advisories from the National Weather Service. It shows provider attribution and update time and caches the last successful response. Until a location is chosen, values are prominently marked as demonstrations.
+
+Environmental terms are explained in context. For example, the dashboard defines AQI as the Air Quality Index, explains that it converts pollution measurements into a public-health scale, and pairs the number with practical guidance. The design distinguishes public-health categories and user thresholds from legally determined regulatory exceedances.
+
 The requirement-by-requirement evidence ledger is in [ACCEPTANCE.md](ACCEPTANCE.md).
 
 ## What is implemented
@@ -24,7 +32,8 @@ The requirement-by-requirement evidence ledger is in [ACCEPTANCE.md](ACCEPTANCE.
 - Adaptive streaming onset detection, sustained-sound rejection, and fixed 90 ms analysis windows.
 - Passive tap acoustics, an optional active acoustic probe, and a hybrid mode.
 - Robust feature normalization, a regularized linear zone model backed by nearest-example novelty checks, ambiguity rejection, out-of-distribution rejection, and optional negative examples.
-- Per-profile actions: visual only, play a sound, copy or speak text, open a website, run a Shortcut, open an application or item, execute a shell command, or capture a screenshot. New zones default to visual-only until the user assigns a side effect.
+- Four fixed environmental outputs with plain-language definitions, practical guidance, and spoken summaries.
+- Optional current-location permission plus city or ZIP-code search, live modeled weather and air quality, provider attribution, and cached last-known readings.
 - Guided 60-tap held-out evaluation with per-zone accuracy, latency, rejected-tap counts, and a confusion matrix.
 - Saved evaluation history is restored after relaunch and scoped to the desk profile that produced it.
 - Signal diagnostics, labeled feature capture, approach comparison, JSON/CSV reports, and opt-in raw debug WAV capture.
@@ -74,7 +83,7 @@ xcodebuild \
 7. The zone disarms after ten accepted samples. Move to the next highlighted zone during the short transition; Holo arms it automatically. Sounds made during the transition are ignored. If listening is paused, use the visible Arm control after resuming.
 8. Use Undo for the latest sample or Redo Zone if a set was inconsistent.
 9. Review the leave-one-out calibration agreement. If it is weak, redo the identified zone before saving.
-10. Save the 40-sample profile and assign its four actions.
+10. Save the 40-sample profile and open the environmental dashboard.
 
 Talking, typing, touching the laptop, and room noise can be collected as negative examples after the four zones are complete. Talking is recommended: speak normally for a few seconds and Holo records only speech peaks that get past the impact gate. Negative examples intentionally do not have to pass the clean-tap quality gate. Only their feature vectors are persisted unless raw debug recording is separately enabled.
 
@@ -82,23 +91,14 @@ Profiles from the obsolete six-zone and nine-zone topologies are intentionally i
 
 While calibration, an accuracy test, or a sensing comparison is active, unrelated sidebar destinations and profile switching are disabled. Cancel or finish the guided capture first. Pausing the microphone disarms every pending capture, including rejection training. Changing profiles never turns a paused microphone back on; explicitly starting a guided capture does resume it.
 
-## Assigning actions
+## Environmental outputs
 
-Actions contains exactly four rows grouped by side. Changes save to the selected profile as they are made, and each configured action has an inline Test button.
+- **Air Quality** explains the U.S. AQI category, PM2.5, ozone, health meaning, and suggested activity changes. Modeled conditions are never described as regulatory exceedances.
+- **Weather & UV** gives temperature, feels-like temperature, humidity, UV risk, and practical sun-protection guidance.
+- **Environmental Alerts** retrieves active National Weather Service watches, warnings, and advisories for U.S. locations. Provider failure is reported as unknown—not “all clear”—and locations outside NWS coverage are directed to their regional authority.
+- **Water & Rain** summarizes modeled daily precipitation and explains that rainfall alone cannot determine flooding, stream conditions, or drinking-water quality.
 
-- Visual only highlights the accepted zone without a side effect.
-- Play sound uses an available macOS system sound.
-- Copy text writes the configured text to the pasteboard.
-- Speak text uses the local speech synthesizer.
-- Open website accepts HTTP or HTTPS addresses.
-- Run Shortcut opens the named Shortcut through the system Shortcuts URL scheme.
-- Open or focus app stores an app-scoped security bookmark for the application selected by the user.
-- Open file or folder stores an app-scoped security bookmark for a user-selected item.
-- Run shell command executes the configured command through `/bin/zsh` with Holo's sandbox permissions.
-- Screenshot to clipboard captures the full display without saving a file.
-- Select screenshot to clipboard invokes the standard interactive area-selection tool.
-
-Actions run only for an accepted classification while Desk is selected. Calibration, profile editing, diagnostics, accuracy reports, and the Actions editor suppress automatic side effects; the editor's inline Test button remains explicit. Rejected, ambiguous, weak, clipped, or out-of-distribution events do not trigger an action. Shell commands run automatically once assigned, so commands should be safe to repeat and should not depend on an interactive terminal. macOS may request access when an action first opens a protected item or captures the screen. A Shortcut is the recommended way to compose multi-step workflows such as opening Claude and beginning a user-defined voice flow.
+The app requests location only after the user selects Use My Location and stops after obtaining a coarse location. City or ZIP search works without location permission. Accepted taps speak environmental summaries only; they do not run arbitrary shortcuts, shell commands, or application actions.
 
 ## Supported surfaces
 
@@ -142,11 +142,11 @@ AVAudioEngine input
   → passive / active feature extraction
   → regularized zone model + nearest-example rejection gates
   → accepted four-zone decision
-  → local action dispatcher
+  → plain-language environmental summary + local speech
 ```
 
 - `Sources/HoloCore` contains the guided capture protocols, detector, FFT and feature extraction, classifier, persistence models, diagnostics, evaluation reporting, and WAV writer. It has no SwiftUI dependency.
-- `Sources/HoloApp` contains audio capture, app state, local action dispatch, and the native SwiftUI interface.
+- `Sources/HoloApp` contains audio capture, app state, location and environmental API integration, local speech, and the native SwiftUI interface.
 - `Sources/HoloSoak` is a non-GUI synthetic DSP stress runner.
 - `Sources/HoloRouteCheck` is a non-GUI check of the current Core Audio input/output transport policy.
 - `Tests/HoloCoreTests` covers guided session totals and ordering, guided-capture quality gates, adaptive room-noise rejection, microphone-request coalescing, the chunked detector-to-classifier pipeline, injected active-probe recovery, shared-spectrum analysis, hardware-route policy, validated local-action planning, negative and ambiguity rejection, evaluation history, strict profile persistence, WAV output, and the exact four-zone topology.
@@ -157,7 +157,7 @@ The interface rationale and source research are in [DESIGN.md](DESIGN.md). The c
 
 ## Privacy and storage
 
-Audio processing happens on the Mac. Holo does not upload audio, features, profiles, or reports. An assigned website or application action can of course open that external destination.
+Audio processing happens on the Mac. Holo does not upload audio, features, profiles, or reports. When a user chooses a location, its coordinates are sent directly to Open-Meteo to retrieve conditions; Holo does not maintain a location-history service.
 
 By default:
 
@@ -219,7 +219,7 @@ DYLD_FRAMEWORK_PATH=/tmp/HoloSoakDerived/Build/Products/Release \
   /tmp/HoloSoakDerived/Build/Products/Release/HoloSoak --duration 1800
 ```
 
-The synthetic runner exercises feature extraction, classification, rejection gates, finite-value checks, and resident-memory behavior. It does not exercise AVAudioEngine, microphone permissions, real room noise, physical desk variability, or action dispatch.
+The synthetic runner exercises feature extraction, classification, rejection gates, finite-value checks, and resident-memory behavior. It does not exercise AVAudioEngine, permissions, environmental network requests, real room noise, or physical desk variability.
 
 Check the current built-in hardware routes without opening Holo or requesting microphone access:
 
@@ -245,7 +245,7 @@ DYLD_FRAMEWORK_PATH=/tmp/HoloRouteDerived/Build/Products/Debug \
 - Calibration quality depends on consistent natural taps. The UI prevents unarmed sounds from being added, but it cannot know whether the user tapped the intended physical location.
 - The active probe is experimental and can be filtered or audible on some hardware.
 - The 80% and 200 ms targets must still be demonstrated with a real held-out session for each target setup.
-- Automated stress results do not replace a 30-minute live microphone and action-dispatch run on the target Mac.
+- Automated stress results do not replace a 30-minute live microphone and environmental-output run on the target Mac.
 
 ## Before claiming the prototype is validated
 

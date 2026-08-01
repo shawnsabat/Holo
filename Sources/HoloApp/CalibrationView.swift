@@ -108,7 +108,7 @@ struct CalibrationView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(session.zonesComplete ? "All zones captured" : session.currentZone?.displayName ?? "Calibration")
                             .font(.title.weight(.semibold))
-                        Text(session.zonesComplete ? "Save the profile, then assign actions." : instruction(for: session))
+                        Text(session.zonesComplete ? "Save the profile to start using environmental tap zones." : instruction(for: session))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
@@ -246,26 +246,12 @@ struct CalibrationView: View {
                     .holoPrimaryButton()
                     .controlSize(.large)
 
-                    Menu("Save Anyway") {
-                        Button("Save and Set Actions") {
-                            model.finishCalibration(openActions: true)
-                        }
-                        Button("Save for Later") {
-                            model.finishCalibration()
-                        }
-                    }
+                    Button("Save Anyway") { model.finishCalibration() }
                     .holoSecondaryButton()
                 } else {
-                    Button("Save and Set Actions") {
-                        model.finishCalibration(openActions: true)
-                    }
+                    Button("Save and Open Dashboard") { model.finishCalibration() }
                     .holoPrimaryButton()
                     .controlSize(.large)
-
-                    Button("Save for Later") {
-                        model.finishCalibration()
-                    }
-                    .holoSecondaryButton()
                 }
 
                 Spacer()

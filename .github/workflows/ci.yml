@@ -24,21 +24,78 @@ jobs:
         run: xcodegen generate
 
       - name: Build
-        run: >
-          xcodebuild
-          -project Holo.xcodeproj
-          -scheme Holo
-          -configuration Debug
-          -derivedDataPath /tmp/HoloDerived
-          CODE_SIGNING_ALLOWED=NO
-          build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Holo.xcodeproj \
+            -scheme Holo \
+            -configuration Debug \
+            -derivedDataPath /tmp/HoloDerived \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee build.log
 
       - name: Unit test
-        run: >
-          xcodebuild
-          -project Holo.xcodeproj
-          -scheme Holo
-          -configuration Debug
-          -derivedDataPath /tmp/HoloDerived
-          CODE_SIGNING_ALLOWED=NO
-          test
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Holo.xcodeproj \
+            -scheme Holo \
+            -configuration Debug \
+            -derivedDataPath /tmp/HoloDerived \
+            CODE_SIGNING_ALLOWED=NO \
+            test 2>&1 | tee test.log
+
+      - name: Build runnable app package
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Holo.xcodeproj \
+            -scheme Holo \
+            -configuration Release \
+            -derivedDataPath /tmp/HoloRelease \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY=- \
+            DEVELOPMENT_TEAM= \
+            build 2>&1 | tee package.log
+          ditto -c -k --keepParent \
+            /tmp/HoloRelease/Build/Products/Release/Holo.app \
+            Holo-environmental-macOS.zip
+
+      - name: Upload runnable app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Holo-environmental-macOS
+          path: Holo-environmental-macOS.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish failure details
+        if: failure()
+        run: |
+          LOG_FILE=''
+          if [ -f package.log ]; then
+            LOG_FILE='package.log'
+          elif [ -f test.log ]; then
+            LOG_FILE='test.log'
+          elif [ -f build.log ]; then
+            LOG_FILE='build.log'
+          fi
+
+          if [ -n "$LOG_FILE" ]; then
+            grep -E 'error:|fatal error:|BUILD FAILED|Testing failed' "$LOG_FILE" \
+              | tail -n 80 \
+              | while IFS= read -r line; do
+                  echo "::error title=Xcode diagnostic::$line"
+                done
+          fi
+
+          echo '### Xcode failure details' >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f test.log ]; then
+            tail -n 250 test.log >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f build.log ]; then
+            tail -n 250 build.log >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'No Xcode log was produced.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

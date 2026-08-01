@@ -1,7 +1,248 @@
 import AppKit
 import Combine
+import CoreLocation
 import Foundation
 import HoloCore
+
+struct EnvironmentalPlace: Codable, Hashable, Identifiable, Sendable {
+    let id: Int
+    let name: String
+    let region: String?
+    let country: String
+    let countryCode: String?
+    let latitude: Double
+    let longitude: Double
+
+    var displayName: String {
+        [name, region, country].compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }.joined(separator: ", ")
+    }
+}
+
+private final class EnvironmentalLocationProvider: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    var onLocation: ((CLLocation) -> Void)?
+    var onError: ((Error) -> Void)?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+    }
+
+    func request() {
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorized:
+            manager.requestLocation()
+        case .denied, .restricted:
+            onError?(CLError(.denied))
+        @unknown default:
+            onError?(CLError(.denied))
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        if manager.authorizationStatus == .authorized {
+            manager.requestLocation()
+        } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
+            onError?(CLError(.denied))
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        onLocation?(location)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        onError?(error)
+    }
+}
+
+private enum EnvironmentalAPI {
+    private struct GeocodingResponse: Decodable { let results: [GeocodingResult]? }
+    private struct GeocodingResult: Decodable {
+        let id: Int
+        let name: String
+        let latitude: Double
+        let longitude: Double
+        let country: String
+        let country_code: String?
+        let admin1: String?
+    }
+    private struct WeatherResponse: Decodable {
+        let current: CurrentWeather
+        let daily: DailyWeather
+    }
+    private struct CurrentWeather: Decodable {
+        let temperature_2m: Double
+        let apparent_temperature: Double
+        let relative_humidity_2m: Double
+        let precipitation: Double
+    }
+    private struct DailyWeather: Decodable {
+        let uv_index_max: [Double]
+        let precipitation_sum: [Double]
+    }
+    private struct AirResponse: Decodable { let current: CurrentAir }
+    private struct CurrentAir: Decodable {
+        let us_aqi: Int
+        let pm2_5: Double
+        let pm10: Double
+        let ozone: Double
+    }
+    private struct NWSAlertResponse: Decodable { let features: [NWSAlertFeature] }
+    private struct NWSAlertFeature: Decodable {
+        let properties: NWSAlertProperties
+    }
+    private struct NWSAlertProperties: Decodable {
+        let event: String
+        let headline: String?
+        let severity: String?
+        let instruction: String?
+    }
+
+    static func search(_ query: String) async throws -> [EnvironmentalPlace] {
+        var components = URLComponents(string: "https://geocoding-api.open-meteo.com/v1/search")!
+        components.queryItems = [
+            URLQueryItem(name: "name", value: query),
+            URLQueryItem(name: "count", value: "6"),
+            URLQueryItem(name: "language", value: "en"),
+            URLQueryItem(name: "format", value: "json")
+        ]
+        let response: GeocodingResponse = try await decode(components.url!)
+        return (response.results ?? []).map {
+            EnvironmentalPlace(
+                id: $0.id, name: $0.name, region: $0.admin1, country: $0.country,
+                countryCode: $0.country_code,
+                latitude: $0.latitude, longitude: $0.longitude
+            )
+        }
+    }
+
+    static func snapshot(
+        latitude: Double,
+        longitude: Double,
+        locationName: String,
+        countryCode: String?
+    ) async throws -> EnvironmentalSnapshot {
+        let weatherURL = url(
+            base: "https://api.open-meteo.com/v1/forecast",
+            latitude: latitude,
+            longitude: longitude,
+            fields: [
+                URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation"),
+                URLQueryItem(name: "daily", value: "uv_index_max,precipitation_sum"),
+                URLQueryItem(name: "temperature_unit", value: "fahrenheit"),
+                URLQueryItem(name: "precipitation_unit", value: "inch")
+            ]
+        )
+        let airURL = url(
+            base: "https://air-quality-api.open-meteo.com/v1/air-quality",
+            latitude: latitude,
+            longitude: longitude,
+            fields: [URLQueryItem(name: "current", value: "us_aqi,pm2_5,pm10,ozone")]
+        )
+
+        async let weatherRequest: WeatherResponse = decode(weatherURL)
+        async let airRequest: AirResponse = decode(airURL)
+        async let alertRequest = alerts(latitude: latitude, longitude: longitude, countryCode: countryCode)
+        let (weather, air, alertResult) = try await (weatherRequest, airRequest, alertRequest)
+        let category = USAirQualityCategory(aqi: air.current.us_aqi)
+        let uv = weather.daily.uv_index_max.first ?? 0
+        let uvRisk = UVRisk(index: uv)
+        let rainfall = weather.daily.precipitation_sum.first ?? weather.current.precipitation
+
+        return EnvironmentalSnapshot(
+            locationName: locationName,
+            updatedAt: Date(),
+            isDemonstration: false,
+            readings: [
+                EnvironmentalReading(
+                    topic: .airQuality,
+                    headline: category.title,
+                    value: "AQI \(air.current.us_aqi)",
+                    explanation: "AQI means Air Quality Index. PM2.5 is \(format(air.current.pm2_5)) micrograms per cubic meter; these tiny particles can travel deep into the lungs. Ozone is \(format(air.current.ozone)) micrograms per cubic meter. These are modeled conditions, not a regulatory determination.",
+                    guidance: category.guidance,
+                    spokenSummary: "Air quality is \(category.title.lowercased()). The Air Quality Index is \(air.current.us_aqi). \(category.guidance)"
+                ),
+                EnvironmentalReading(
+                    topic: .weatherAndUV,
+                    headline: "\(Int(weather.current.temperature_2m.rounded())) degrees · \(uvRisk.title) UV",
+                    value: "UV \(format(uv))",
+                    explanation: "It feels like \(Int(weather.current.apparent_temperature.rounded())) degrees with \(Int(weather.current.relative_humidity_2m.rounded())) percent humidity. The UV Index describes the strength of skin-damaging ultraviolet radiation.",
+                    guidance: uvRisk.guidance,
+                    spokenSummary: "It is \(Int(weather.current.temperature_2m.rounded())) degrees and feels like \(Int(weather.current.apparent_temperature.rounded())). The UV Index is \(format(uv)), which is \(uvRisk.title.lowercased()). \(uvRisk.guidance)"
+                ),
+                EnvironmentalAlertInterpreter.reading(for: alertResult),
+                EnvironmentalReading(
+                    topic: .waterAndRain,
+                    headline: rainfall < 0.1 ? "Little rain expected" : "Rain expected today",
+                    value: "\(format(rainfall)) inches",
+                    explanation: "This is today's modeled precipitation total. Rainfall can affect runoff and flood potential, but this value does not measure drinking-water quality or stream level.",
+                    guidance: rainfall >= 1 ? "Watch official flood information and avoid flooded roads." : "No conclusion about flooding can be made from rainfall alone.",
+                    spokenSummary: "Today's forecast rainfall is \(format(rainfall)) inches. Rainfall alone does not determine flood risk or drinking-water quality."
+                )
+            ]
+        )
+    }
+
+    private static func url(base: String, latitude: Double, longitude: Double, fields: [URLQueryItem]) -> URL {
+        var components = URLComponents(string: base)!
+        components.queryItems = [
+            URLQueryItem(name: "latitude", value: String(latitude)),
+            URLQueryItem(name: "longitude", value: String(longitude)),
+            URLQueryItem(name: "timezone", value: "auto")
+        ] + fields
+        return components.url!
+    }
+
+    private static func decode<T: Decodable>(_ url: URL) async throws -> T {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private static func alerts(
+        latitude: Double,
+        longitude: Double,
+        countryCode: String?
+    ) async -> EnvironmentalAlertAvailability {
+        let supportedCodes = Set(["US", "PR", "GU", "VI", "AS", "MP"])
+        guard let countryCode = countryCode?.uppercased(), supportedCodes.contains(countryCode) else {
+            return .outsideCoverage
+        }
+        var components = URLComponents(string: "https://api.weather.gov/alerts/active")!
+        components.queryItems = [URLQueryItem(name: "point", value: "\(latitude),\(longitude)")]
+        var request = URLRequest(url: components.url!)
+        request.setValue("Holo/0.1 (github.com/shawnsabat/Holo)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/geo+json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+                return .unavailable
+            }
+            let properties = try JSONDecoder().decode(NWSAlertResponse.self, from: data).features.map(\.properties)
+            let alerts = properties.map {
+                EnvironmentalAlert(event: $0.event, headline: $0.headline, severity: $0.severity)
+            }
+            return alerts.isEmpty ? .none : .active(alerts)
+        } catch {
+            return .unavailable
+        }
+    }
+
+    private static func format(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1)))
+    }
+}
 
 enum DiagnosticLabel: Hashable, Identifiable {
     case zone(DeskZone)
@@ -61,6 +302,12 @@ final class AppModel: ObservableObject {
     @Published var debugRecordingEnabled = false
     @Published private(set) var hasDebugRecordings = false
     @Published var errorMessage: String?
+    @Published private(set) var environmentalSnapshot = EnvironmentalSnapshot.demonstration()
+    @Published var learningMode = true
+    @Published private(set) var environmentalPlaces: [EnvironmentalPlace] = []
+    @Published private(set) var selectedEnvironmentalPlace: EnvironmentalPlace?
+    @Published private(set) var isLoadingEnvironmentalData = false
+    @Published private(set) var environmentalDataMessage = "Choose a location for live conditions"
 
     let audio = AudioCaptureService()
     @Published var calibrationDraft = CalibrationDraft()
@@ -70,6 +317,8 @@ final class AppModel: ObservableObject {
     private let comparisonStore: ApproachComparisonStore?
     private let debugStore: DebugRecordingStore?
     private let actionDispatcher = LocalActionDispatcher()
+    private let environmentalSpeaker = NSSpeechSynthesizer()
+    private let environmentalLocationProvider = EnvironmentalLocationProvider()
     private var recalibratingProfileID: UUID?
     private var calibrationAcceptAfter = Date.distantPast
     private var evaluationAcceptAfter = Date.distantPast
@@ -80,6 +329,8 @@ final class AppModel: ObservableObject {
     private var activeZoneClearTask: Task<Void, Never>?
     private var pausedByUser = false
     private var cancellables: Set<AnyCancellable> = []
+    private static let environmentalSnapshotKey = "environmental.snapshot.v1"
+    private static let environmentalPlaceKey = "environmental.place.v1"
 
     init() {
         var startupErrors: [String] = []
@@ -147,6 +398,18 @@ final class AppModel: ObservableObject {
         audio.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
+
+        environmentalLocationProvider.onLocation = { [weak self] location in
+            Task { @MainActor in await self?.useCurrentLocation(location) }
+        }
+        environmentalLocationProvider.onError = { [weak self] error in
+            Task { @MainActor in
+                self?.isLoadingEnvironmentalData = false
+                self?.environmentalDataMessage = "Location unavailable — search for a city or ZIP code"
+                self?.errorMessage = "Holo could not use the current location. You can search for a city or ZIP code instead. \(error.localizedDescription)"
+            }
+        }
+        restoreEnvironmentalCache()
     }
 
     var selectedProfile: HoloProfile? {
@@ -203,6 +466,9 @@ final class AppModel: ObservableObject {
     }
 
     func activateOnLaunch() async {
+        if selectedEnvironmentalPlace != nil {
+            Task { await refreshEnvironmentalData() }
+        }
         guard selectedProfile != nil else {
             section = .calibrate
             statusMessage = "Setup required • calibrate the four desk zones"
@@ -412,7 +678,7 @@ final class AppModel: ObservableObject {
         statusMessage = "Retry \(zone.displayName) • tap 1 of \(session.targetPerZone)"
     }
 
-    func finishCalibration(openActions: Bool = false) {
+    func finishCalibration() {
         guard let session = calibrationSession, session.zonesComplete else { return }
         do {
             let classifier = try TrainedTapClassifier.train(
@@ -451,7 +717,7 @@ final class AppModel: ObservableObject {
             calibrationValidation = nil
             guidedCaptureIssue = nil
             recalibratingProfileID = nil
-            section = openActions ? .actions : .live
+            section = .live
             statusMessage = "Calibration saved • listening"
             Task {
                 do { try await reconfigureListeningAudio(to: profile.sensingStrategy) }
@@ -745,22 +1011,123 @@ final class AppModel: ObservableObject {
         decision.processingLatencyMilliseconds = observation.processingLatencyMilliseconds
         present(decision)
         if let zone = decision.zone {
-            if LocalActionDispatchPolicy.allowsAutomaticDispatch(
-                for: decision,
-                isDeskActive: section == .live
-            ) {
-                statusMessage = "\(zone.displayName) • \(Int(decision.confidence * 100))% confidence"
-                do { try actionDispatcher.perform(profile.action(for: zone)) }
-                catch {
-                    statusMessage = "\(zone.displayName) accepted • action failed"
-                    errorMessage = error.localizedDescription
-                }
+            if section == .live {
+                statusMessage = "\(zone.environmentalTopic.title) • \(Int(decision.confidence * 100))% confidence"
+                speakEnvironmentalSummary(for: zone)
             } else {
-                statusMessage = "\(zone.displayName) detected • actions paused outside Desk"
+                statusMessage = "\(zone.displayName) detected • environmental output paused outside Desk"
             }
         } else {
             statusMessage = "Rejected • \(decision.rejectionReason?.displayName ?? "low confidence")"
         }
+    }
+
+    func environmentalReading(for zone: DeskZone) -> EnvironmentalReading? {
+        environmentalSnapshot.reading(for: zone.environmentalTopic)
+    }
+
+    func requestCurrentEnvironmentalLocation() {
+        isLoadingEnvironmentalData = true
+        environmentalDataMessage = "Requesting current location…"
+        environmentalLocationProvider.request()
+    }
+
+    func searchEnvironmentalLocations(_ query: String) async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else {
+            environmentalPlaces = []
+            return
+        }
+        isLoadingEnvironmentalData = true
+        environmentalDataMessage = "Searching locations…"
+        do {
+            environmentalPlaces = try await EnvironmentalAPI.search(trimmed)
+            environmentalDataMessage = environmentalPlaces.isEmpty
+                ? "No matching locations"
+                : "Select a matching location"
+        } catch {
+            environmentalPlaces = []
+            environmentalDataMessage = "Location search failed"
+            errorMessage = "Holo could not search locations. Check your internet connection and try again. \(error.localizedDescription)"
+        }
+        isLoadingEnvironmentalData = false
+    }
+
+    func selectEnvironmentalPlace(_ place: EnvironmentalPlace) async {
+        selectedEnvironmentalPlace = place
+        environmentalPlaces = []
+        await refreshEnvironmentalData()
+    }
+
+    func refreshEnvironmentalData() async {
+        guard let place = selectedEnvironmentalPlace else {
+            environmentalDataMessage = "Choose a location for live conditions"
+            return
+        }
+        isLoadingEnvironmentalData = true
+        environmentalDataMessage = "Updating \(place.displayName)…"
+        do {
+            let snapshot = try await EnvironmentalAPI.snapshot(
+                latitude: place.latitude,
+                longitude: place.longitude,
+                locationName: place.displayName,
+                countryCode: place.countryCode
+            )
+            environmentalSnapshot = snapshot
+            environmentalDataMessage = "Live conditions · Open-Meteo + NWS alerts"
+            saveEnvironmentalCache()
+        } catch {
+            environmentalDataMessage = environmentalSnapshot.isDemonstration
+                ? "Live data unavailable"
+                : "Update failed · showing saved conditions"
+            errorMessage = "Holo could not update environmental conditions. \(error.localizedDescription)"
+        }
+        isLoadingEnvironmentalData = false
+    }
+
+    private func useCurrentLocation(_ location: CLLocation) async {
+        let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first
+        let name = placemark?.locality ?? placemark?.administrativeArea ?? "Current location"
+        let place = EnvironmentalPlace(
+            id: 0,
+            name: name,
+            region: placemark?.locality == nil ? nil : placemark?.administrativeArea,
+            country: placemark?.country ?? "",
+            countryCode: placemark?.isoCountryCode,
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude
+        )
+        await selectEnvironmentalPlace(place)
+    }
+
+    private func restoreEnvironmentalCache() {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: Self.environmentalSnapshotKey),
+           let snapshot = try? JSONDecoder().decode(EnvironmentalSnapshot.self, from: data) {
+            environmentalSnapshot = snapshot
+            environmentalDataMessage = "Saved conditions · refresh for the latest update"
+        }
+        if let data = defaults.data(forKey: Self.environmentalPlaceKey),
+           let place = try? JSONDecoder().decode(EnvironmentalPlace.self, from: data) {
+            selectedEnvironmentalPlace = place
+        }
+    }
+
+    private func saveEnvironmentalCache() {
+        let defaults = UserDefaults.standard
+        if let data = try? JSONEncoder().encode(environmentalSnapshot) {
+            defaults.set(data, forKey: Self.environmentalSnapshotKey)
+        }
+        if let selectedEnvironmentalPlace,
+           let data = try? JSONEncoder().encode(selectedEnvironmentalPlace) {
+            defaults.set(data, forKey: Self.environmentalPlaceKey)
+        }
+    }
+
+    private func speakEnvironmentalSummary(for zone: DeskZone) {
+        guard let reading = environmentalReading(for: zone) else { return }
+        environmentalSpeaker.stopSpeaking()
+        environmentalSpeaker.startSpeaking(reading.spokenSummary)
     }
 
     private func handleCalibration(_ observation: TapObservation, session: inout CalibrationSession) {

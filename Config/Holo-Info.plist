@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Holo listens for desk taps locally. Audio is discarded unless you explicitly enable debug recording.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Holo uses your approximate location to retrieve nearby weather, air quality, and environmental conditions.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Holo uses your approximate location to retrieve nearby weather, air quality, and environmental conditions.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 </dict>
