@@ -36,7 +36,7 @@ private final class EnvironmentalLocationProvider: NSObject, CLLocationManagerDe
         switch manager.authorizationStatus {
         case .notDetermined:
             manager.requestWhenInUseAuthorization()
-        case .authorizedWhenInUse, .authorizedAlways:
+        case .authorized:
             manager.requestLocation()
         case .denied, .restricted:
             onError?(CLError(.denied))
@@ -46,7 +46,7 @@ private final class EnvironmentalLocationProvider: NSObject, CLLocationManagerDe
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
+        if manager.authorizationStatus == .authorized {
             manager.requestLocation()
         } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
             onError?(CLError(.denied))
